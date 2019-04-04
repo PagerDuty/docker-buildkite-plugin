@@ -169,8 +169,13 @@ while IFS='=' read -r name _ ; do
   fi
 done < <(env | sort)
 
+# Set up the lib directory for PagerDuty-specific add-ons
+DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+
 # Mount ssh-agent socket and known_hosts
 if [[ "${BUILDKITE_PLUGIN_DOCKER_MOUNT_SSH_AGENT:-$mount_ssh_agent}" =~ ^(true|on|1)$ ]] ; then
+  # shellcheck source=lib/pd-ssh.bash
+  . "$DIR/../lib/pd-ssh.bash"
   args+=(
     "--env" "SSH_AUTH_SOCK=/ssh-agent"
     "--volume" "${SSH_AUTH_SOCK}:/ssh-agent"
@@ -206,6 +211,10 @@ while IFS='=' read -r name _ ; do
     args+=( "--env" "${!name}" )
   fi
 done < <(env | sort)
+
+# Pass secrets set by the PagerDuty secrets plugin in to the Docker container
+# shellcheck source=lib/pd-secrets.bash
+. "$DIR/../lib/pd-secrets.bash"
 
 # Privileged container
 if [[ "${BUILDKITE_PLUGIN_DOCKER_PRIVILEGED:-false}" =~ ^(true|on|1)$ ]] ; then
