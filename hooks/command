@@ -219,6 +219,7 @@ done < <(env | sort)
 # Privileged container
 if [[ "${BUILDKITE_PLUGIN_DOCKER_PRIVILEGED:-false}" =~ ^(true|on|1)$ ]] ; then
     args+=( "--privileged" )
+    args+=( "--userns=host" ) # We must do this in addition because we have userns-remap enabled
 fi
 
 # Propagate all environment variables into the container if requested
