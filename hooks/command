@@ -1,21 +1,19 @@
 #!/bin/bash
-
 set -euo pipefail
 
 # retry <number-of-retries> <command>
 function retry {
   local retries=$1; shift
   local attempts=1
-  local status=0
 
   until "$@"; do
-    status=$?
-    echo "Exited with $status"
+    retry_exit_status=$?
+    echo "Exited with $retry_exit_status"
     if (( retries == "0" )); then
-      return $status
+      return $retry_exit_status
     elif (( attempts == retries )); then
       echo "Failed $attempts retries"
-      return $status
+      return $retry_exit_status
     else
       echo "Retrying $((retries - attempts)) more times..."
       attempts=$((attempts + 1))
@@ -68,12 +66,6 @@ is_macos() {
   [[ "$OSTYPE" =~ ^(darwin) ]]
 }
 
-debug_mode='off'
-if [[ "${BUILDKITE_PLUGIN_DOCKER_DEBUG:-false}" =~ (true|on|1) ]] ; then
-  echo "--- :hammer: Enabling debug mode"
-  debug_mode='on'
-fi
-
 tty_default='on'
 init_default='on'
 mount_agent_default='on'
@@ -108,16 +100,6 @@ if [[ "${BUILDKITE_PLUGIN_DOCKER_INIT:-$init_default}" =~ ^(true|on|1)$ ]] ; the
     args+=("--init")
 fi
 
-if [[ -n "${BUILDKITE_PLUGIN_DOCKER_MOUNTS:-}" && ! "${BUILDKITE_PLUGIN_DOCKER_MOUNTS:-}" =~ ^(true|false)$ ]] ; then
-  echo "🚨 The Docker Plugin’s mounts configuration option must be an array or a boolean."
-  exit 1
-fi
-
-if [[ -n "${BUILDKITE_PLUGIN_DOCKER_VOLUMES:-}" && ! "${BUILDKITE_PLUGIN_DOCKER_VOLUMES:-}" =~ ^(true|false)$ ]] ; then
-  echo "🚨 The Docker Plugin’s volumes configuration option must be an array or a boolean."
-  exit 1
-fi
-
 # Parse tmpfs property.
 if plugin_read_list_into_result BUILDKITE_PLUGIN_DOCKER_TMPFS ; then
   for arg in "${result[@]}" ; do
@@ -143,6 +125,20 @@ if plugin_read_list_into_result BUILDKITE_PLUGIN_DOCKER_VOLUMES BUILDKITE_PLUGIN
   done
 fi
 
+# Parse devices and add them to the docker args
+if plugin_read_list_into_result BUILDKITE_PLUGIN_DOCKER_DEVICES ; then
+  for arg in "${result[@]}" ; do
+    args+=( "--device" "${arg}" )
+  done
+fi
+
+# Parse sysctl args and add them to docker args
+if plugin_read_list_into_result BUILDKITE_PLUGIN_DOCKER_SYSCTLS ; then
+  for arg in "${result[@]}" ; do
+    args+=( "--sysctl" "$arg" )
+  done
+fi
+
 # Set workdir if one is provided or if the checkout is mounted
 if [[ -n "${workdir:-}" ]] || [[ "${BUILDKITE_PLUGIN_DOCKER_MOUNT_CHECKOUT:-on}" =~ ^(true|on|1)$ ]]; then
   args+=("--workdir" "${workdir}")
@@ -156,6 +152,13 @@ fi
 
 if [[ -n "${BUILDKITE_PLUGIN_DOCKER_USER:-}" ]] ; then
   args+=("-u" "${BUILDKITE_PLUGIN_DOCKER_USER:-}")
+fi
+
+# Parse publish args and add them to docker args
+if plugin_read_list_into_result BUILDKITE_PLUGIN_DOCKER_PUBLISH ; then
+  for arg in "${result[@]}" ; do
+    args+=( "--publish" "$arg" )
+  done
 fi
 
 if [[ -n "${BUILDKITE_PLUGIN_DOCKER_PROPAGATE_UID_GID:-}" ]] ; then
@@ -176,6 +179,25 @@ DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
 if [[ "${BUILDKITE_PLUGIN_DOCKER_MOUNT_SSH_AGENT:-$mount_ssh_agent}" =~ ^(true|on|1)$ ]] ; then
   # shellcheck source=lib/pd-ssh.bash
   . "$DIR/../lib/pd-ssh.bash"
+# Support docker run --userns
+if [[ -n "${BUILDKITE_PLUGIN_DOCKER_USERNS:-}" ]]; then
+  args+=("--userns" "${BUILDKITE_PLUGIN_DOCKER_USERNS:-}")
+fi
+
+# Mount ssh-agent socket and known_hosts
+if [[ "${BUILDKITE_PLUGIN_DOCKER_MOUNT_SSH_AGENT:-$mount_ssh_agent}" =~ ^(true|on|1)$ ]] ; then
+  if [[ -z "${SSH_AUTH_SOCK:-}" ]] ; then
+    echo "+++ 🚨 \$SSH_AUTH_SOCK isn't set, has ssh-agent started?"
+    exit 1
+  fi
+  if [[ ! -S "${SSH_AUTH_SOCK}" ]] ; then
+    echo "+++ 🚨 There isn't any file at ${SSH_AUTH_SOCK}, has ssh-agent started?"
+    exit 1
+  fi
+  if [[ ! -S "${SSH_AUTH_SOCK}" ]] ; then
+    echo "+++ 🚨 The file at ${SSH_AUTH_SOCK} isn't a socket, has ssh-agent started?"
+    exit 1
+  fi
   args+=(
     "--env" "SSH_AUTH_SOCK=/ssh-agent"
     "--volume" "${SSH_AUTH_SOCK}:/ssh-agent"
@@ -216,6 +238,13 @@ done < <(env | sort)
 # shellcheck source=lib/pd-secrets.bash
 . "$DIR/../lib/pd-secrets.bash"
 
+# Parse host mappings and add them to the docker args
+while IFS='=' read -r name _ ; do
+  if [[ $name =~ ^(BUILDKITE_PLUGIN_DOCKER_ADD_HOST_[0-9]+) ]] ; then
+    args+=( "--add-host" "${!name}" )
+  fi
+done < <(env | sort)
+
 # Privileged container
 if [[ "${BUILDKITE_PLUGIN_DOCKER_PRIVILEGED:-false}" =~ ^(true|on|1)$ ]] ; then
     args+=( "--privileged" )
@@ -239,9 +268,8 @@ if [[ "${BUILDKITE_PLUGIN_DOCKER_ALWAYS_PULL:-false}" =~ ^(true|on|1)$ ]] ; then
   echo "--- :docker: Pulling ${BUILDKITE_PLUGIN_DOCKER_IMAGE}"
   if ! retry "${BUILDKITE_PLUGIN_DOCKER_PULL_RETRIES:-3}" \
        docker pull "${BUILDKITE_PLUGIN_DOCKER_IMAGE}" ; then
-    rv=$?
     echo "!!! :docker: Pull failed."
-    exit $rv
+    exit $retry_exit_status
   fi
 fi
 
@@ -302,6 +330,9 @@ elif plugin_read_list_into_result BUILDKITE_PLUGIN_DOCKER_SHELL ; then
   done
 fi
 
+# Add the job id as meta-data for reference in pre-exit
+args+=("--label" "com.buildkite.job-id=${BUILDKITE_JOB_ID}")
+
 # Add the image in before the shell and command
 args+=("${BUILDKITE_PLUGIN_DOCKER_IMAGE}")
 
@@ -315,12 +346,6 @@ if [[ -z $shell_disabled ]] && [[ ${#shell[@]} -eq 0 ]] ; then
 fi
 
 command=()
-
-# Show a helpful error message if string version of command is used
-if [[ -n "${BUILDKITE_PLUGIN_DOCKER_COMMAND:-}" ]] ; then
-  echo -n "🚨 The Docker Plugin’s command configuration option must be an array."
-  exit 1
-fi
 
 # Parse plugin command if provided
 if plugin_read_list_into_result BUILDKITE_PLUGIN_DOCKER_COMMAND ; then
@@ -336,12 +361,9 @@ fi
 
 # Assemble the shell and command arguments into the docker arguments
 
-display_command=()
-
 if [[ ${#shell[@]} -gt 0 ]] ; then
   for shell_arg in "${shell[@]}" ; do
     args+=("$shell_arg")
-    display_command+=("$shell_arg")
   done
 fi
 
@@ -350,23 +372,21 @@ if [[ -n "${BUILDKITE_COMMAND}" ]] ; then
     # The windows CMD shell only supports multiple commands with &&.
     windows_multi_command=${BUILDKITE_COMMAND//$'\n'/ && }
     args+=("${windows_multi_command}")
-    display_command+=("'${windows_multi_command}'")
   else
     args+=("${BUILDKITE_COMMAND}")
-    display_command+=("'${BUILDKITE_COMMAND}'")
   fi
 elif [[ ${#command[@]} -gt 0 ]] ; then
   for command_arg in "${command[@]}" ; do
     args+=("$command_arg")
-    display_command+=("${command_arg}")
   done
 fi
 
-echo "--- :docker: Running ${display_command[*]} in ${BUILDKITE_PLUGIN_DOCKER_IMAGE}"
+echo "--- :docker: Running command in ${BUILDKITE_PLUGIN_DOCKER_IMAGE}"
+echo -ne '\033[90m$\033[0m docker run ' >&2
 
-if [[ "${debug_mode:-off}" =~ (on) ]] ; then
-  echo "$ docker run ${args[*]}" >&2
-fi
+# Print all the arguments, with a space after, properly shell quoted
+printf "%q " "${args[@]}"
+echo
 
 # Don't convert paths on gitbash on windows, as that can mangle user paths and cmd options.
 # See https://github.com/buildkite-plugins/docker-buildkite-plugin/issues/81 for more information.
