@@ -5,6 +5,8 @@ requirements:
   - docker
 configuration:
   properties:
+    add-host:
+      type: array
     additional-groups:
       type: array
     always-pull:
@@ -37,7 +39,11 @@ configuration:
       type: boolean
     user:
       type: string
+    userns:
+      type: string
     volumes:
+      type: array
+    devices:
       type: array
     tmpfs:
       type: array
@@ -49,8 +55,12 @@ configuration:
       type: boolean
     privileged:
       type: boolean
+    publish:
+      type: array
     init:
       type: boolean
+    sysctls:
+      type: array
   required:
     - image
   additionalProperties: false

@@ -13,7 +13,7 @@ steps:
   - command: "go build -o dist/my-app ."
     artifact_paths: "./dist/my-app"
     plugins:
-      - docker#v3.1.0:
+      - docker#v3.3.0:
           image: "golang:1.11"
 ```
 
@@ -23,7 +23,7 @@ Windows images are also supported:
 steps:
   - command: "dotnet publish -c Release -o published"
     plugins:
-      - docker#v3.1.0:
+      - docker#v3.3.0:
           image: "microsoft/dotnet:latest"
           always-pull: true
 ```
@@ -33,7 +33,7 @@ If you want to control how your command is passed to the docker container, you c
 ```yml
 steps:
   - plugins:
-      - docker#v3.1.0:
+      - docker#v3.3.0:
           image: "mesosphere/aws-cli"
           always-pull: true
           command: ["s3", "sync", "s3://my-bucket/dist/", "/app/dist"]
@@ -48,7 +48,7 @@ steps:
       - "yarn install"
       - "yarn run test"
     plugins:
-      - docker#v3.1.0:
+      - docker#v3.3.0:
           image: "node:7"
           always-pull: true
           environment:
@@ -66,7 +66,7 @@ steps:
     env:
       MY_SPECIAL_BUT_PUBLIC_VALUE: kittens
     plugins:
-      - docker#v3.1.0:
+      - docker#v3.3.0:
           image: "node:7"
           always-pull: true
           propagate-environment: true
@@ -80,7 +80,7 @@ steps:
       - "docker build . -t image:tag"
       - "docker push image:tag"
     plugins:
-      - docker#v3.1.0:
+      - docker#v3.3.0:
           image: "docker:latest"
           always-pull: true
           volumes:
@@ -93,7 +93,7 @@ You can disable the default behaviour of mounting in the checkout to `workdir`:
 steps:
   - command: "npm start"
     plugins:
-      - docker#v3.1.0:
+      - docker#v3.3.0:
           image: "node:7"
           always-pull: true
           mount-checkout: false
@@ -110,6 +110,12 @@ The name of the Docker image to use.
 Example: `node:7`
 
 ### Optional
+
+### `add-host` (optional, array)
+
+Additional lines can be added to `/etc/hosts` in the container, in an array of mappings. See https://docs.docker.com/engine/reference/run/#managing-etchosts for more details.
+
+Example: `buildkite.fake:123.0.0.7`
 
 ### `additional-groups` (optional, array)
 
@@ -231,6 +237,12 @@ Allows a user to be set, and override the USER entry in the Dockerfile. See http
 
 Example: `root`
 
+### `userns` (optional, string)
+
+Allows to explicitly set the user namespace. This overrides the default docker daemon value. If you use the value `host`, you disable user namespaces for this run. See https://docs.docker.com/engine/security/userns-remap/ for more details.
+
+Example: `mynamespace`
+
 ### `volumes` (optional, array or boolean)
 
 Extra volume mounts to pass to the docker container, in an array. Items are specified as `SOURCE:TARGET`. Each entry corresponds to a Docker CLI `--volume` parameter. Relative local paths are converted to their full-path (e.g `./code:/app`).
@@ -248,6 +260,24 @@ Example: `[ "/tmp", "/root/.cache" ]`
 The working directory to run the command in, inside the container. The default is `/workdir`. This path is also used by `mount-checkout` to determine where to mount the checkout in the container.
 
 Example: `/app`
+
+### `sysctls`(optional, array)
+
+Set namespaced kernel parameters in the container. More information can be found in https://docs.docker.com/engine/reference/commandline/run/.
+
+Example: `--sysctl net.ipv4.ip_forward=1`
+
+### `devices` (optional, array)
+
+You can give builds limited access to a specific device or devices by passing devices to the docker container, in an array. Items are specific as `SOURCE:TARGET` or just `TARGET`. Each entry corresponds to a Docker CLI `--device` parameter.
+
+Example: `[ "/dev/bus/usb/001/001" ]`
+
+### `publish` (optional, array)
+
+You can allow the docker container to publish ports. More information can be found in https://docs.docker.com/config/containers/container-networking/. Each entry corresponds to a Docker CLI `--publish` or `-p` parameter.
+
+Example: `[ "8080:80" ]` (Map TCP port 80 in the container to port 8080 on the Docker host.)
 
 ## Developing
 
