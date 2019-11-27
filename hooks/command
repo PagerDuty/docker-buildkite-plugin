@@ -179,6 +179,8 @@ DIR="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
 if [[ "${BUILDKITE_PLUGIN_DOCKER_MOUNT_SSH_AGENT:-$mount_ssh_agent}" =~ ^(true|on|1)$ ]] ; then
   # shellcheck source=lib/pd-ssh.bash
   . "$DIR/../lib/pd-ssh.bash"
+fi
+
 # Support docker run --userns
 if [[ -n "${BUILDKITE_PLUGIN_DOCKER_USERNS:-}" ]]; then
   args+=("--userns" "${BUILDKITE_PLUGIN_DOCKER_USERNS:-}")
